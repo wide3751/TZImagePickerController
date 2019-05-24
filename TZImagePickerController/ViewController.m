@@ -20,6 +20,7 @@
 #import "TZAssetCell.h"
 #import <MobileCoreServices/MobileCoreServices.h>
 #import "FLAnimatedImage.h"
+#import "TZImageUploadOperation.h"
 
 @interface ViewController ()<TZImagePickerControllerDelegate,UICollectionViewDataSource,UICollectionViewDelegate,UIImagePickerControllerDelegate,UIAlertViewDelegate,UINavigationControllerDelegate> {
     NSMutableArray *_selectedPhotos;
@@ -33,6 +34,8 @@
 @property (nonatomic, strong) UICollectionView *collectionView;
 @property (strong, nonatomic) LxGridViewFlowLayout *layout;
 @property (strong, nonatomic) CLLocation *location;
+
+@property (nonatomic, strong) NSOperationQueue *operationQueue;
 
 @property (weak, nonatomic) IBOutlet UIScrollView *scrollView;
 // 设置开关
@@ -270,7 +273,7 @@
         imagePickerController.videoQuality = UIImagePickerControllerQualityTypeHigh;
     }];
     
-    // imagePickerVc.photoWidth = 1000;
+    // imagePickerVc.photoWidth = 800;
     
     // 2. Set the appearance
     // 2. 在这里设置imagePickerVc的外观
@@ -533,10 +536,12 @@
 }
 
 // The picker should dismiss itself; when it dismissed these handle will be called.
+// You can also set autoDismiss to NO, then the picker don't dismiss itself.
 // If isOriginalPhoto is YES, user picked the original photo.
 // You can get original photo with asset, by the method [[TZImageManager manager] getOriginalPhotoWithAsset:completion:].
 // The UIImage Object in photos default width is 828px, you can set it by photoWidth property.
 // 这个照片选择器会自己dismiss，当选择器dismiss的时候，会执行下面的代理方法
+// 你也可以设置autoDismiss属性为NO，选择器就不会自己dismis了
 // 如果isSelectOriginalPhoto为YES，表明用户选择了原图
 // 你可以通过一个asset获得原图，通过这个方法：[[TZImageManager manager] getOriginalPhotoWithAsset:completion:]
 // photos数组里的UIImage对象，默认是828像素宽，你可以通过设置photoWidth属性的值来改变它
@@ -554,33 +559,32 @@
         NSLog(@"location:%@",phAsset.location);
     }
     
-    /*
-    // 3. 获取原图的示例，这样一次性获取很可能会导致内存飙升，建议获取1-2张，消费和释放掉，再获取剩下的
-    __block NSMutableArray *originalPhotos = [NSMutableArray array];
-    __block NSInteger finishCount = 0;
-    for (NSInteger i = 0; i < assets.count; i++) {
-        [originalPhotos addObject:@1];
-    }
+    // 3. 获取原图的示例，用队列限制最大并发为1，避免内存暴增
+    self.operationQueue = [[NSOperationQueue alloc] init];
+    self.operationQueue.maxConcurrentOperationCount = 1;
     for (NSInteger i = 0; i < assets.count; i++) {
         PHAsset *asset = assets[i];
-        [[TZImageManager manager] getOriginalPhotoWithAsset:asset completion:^(UIImage *photo, NSDictionary *info) {
-            finishCount += 1;
-            [originalPhotos replaceObjectAtIndex:i withObject:photo];
-            if (finishCount >= assets.count) {
-                NSLog(@"All finished.");
-            }
+        // 图片上传operation，上传代码请写到operation内的start方法里，内有注释
+        TZImageUploadOperation *operation = [[TZImageUploadOperation alloc] initWithAsset:asset completion:^(UIImage * photo, NSDictionary *info, BOOL isDegraded) {
+            if (isDegraded) return;
+            NSLog(@"图片获取&上传完成");
+        } progressHandler:^(double progress, NSError * _Nonnull error, BOOL * _Nonnull stop, NSDictionary * _Nonnull info) {
+            NSLog(@"获取原图进度 %f", progress);
         }];
+        [self.operationQueue addOperation:operation];
     }
-     */
 }
 
-// If user picking a video, this callback will be called.
-// 如果用户选择了一个视频，下面的handle会被执行
+// If user picking a video and allowPickingMultipleVideo is NO, this callback will be called.
+// If allowPickingMultipleVideo is YES, will call imagePickerController:didFinishPickingPhotos:sourceAssets:isSelectOriginalPhoto:
+// 如果用户选择了一个视频且allowPickingMultipleVideo是NO，下面的代理方法会被执行
+// 如果allowPickingMultipleVideo是YES，将会调用imagePickerController:didFinishPickingPhotos:sourceAssets:isSelectOriginalPhoto:
 - (void)imagePickerController:(TZImagePickerController *)picker didFinishPickingVideo:(UIImage *)coverImage sourceAssets:(PHAsset *)asset {
     _selectedPhotos = [NSMutableArray arrayWithArray:@[coverImage]];
     _selectedAssets = [NSMutableArray arrayWithArray:@[asset]];
     // open this code to send video / 打开这段代码发送视频
     [[TZImageManager manager] getVideoOutputPathWithAsset:asset presetName:AVAssetExportPreset640x480 success:^(NSString *outputPath) {
+        // NSData *data = [NSData dataWithContentsOfFile:outputPath];
         NSLog(@"视频导出到本地完成,沙盒路径为:%@",outputPath);
         // Export completed, send video here, send by outputPath or NSData
         // 导出完成，在这里写上传代码，通过路径或者通过NSData上传
@@ -591,8 +595,10 @@
     // _collectionView.contentSize = CGSizeMake(0, ((_selectedPhotos.count + 2) / 3 ) * (_margin + _itemWH));
 }
 
-// If user picking a gif image, this callback will be called.
-// 如果用户选择了一个gif图片，下面的handle会被执行
+// If user picking a gif image and allowPickingMultipleVideo is NO, this callback will be called.
+// If allowPickingMultipleVideo is YES, will call imagePickerController:didFinishPickingPhotos:sourceAssets:isSelectOriginalPhoto:
+// 如果用户选择了一个gif图片且allowPickingMultipleVideo是NO，下面的代理方法会被执行
+// 如果allowPickingMultipleVideo是YES，将会调用imagePickerController:didFinishPickingPhotos:sourceAssets:isSelectOriginalPhoto:
 - (void)imagePickerController:(TZImagePickerController *)picker didFinishPickingGifImage:(UIImage *)animatedImage sourceAssets:(PHAsset *)asset {
     _selectedPhotos = [NSMutableArray arrayWithArray:@[animatedImage]];
     _selectedAssets = [NSMutableArray arrayWithArray:@[asset]];
